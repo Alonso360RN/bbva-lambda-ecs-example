@@ -1,0 +1,594 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'bbva-lambdas
+
+  Sample SAM Template for bbva-lambdas
+
+  '
+Globals:
+  Function:
+    Timeout: 60
+Resources:
+  CharacterTaskExecutionPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: bbva-characters-task-execution-policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+          Resource: '*'
+      Roles:
+      - Ref: CharacterTaskExecutionRole
+  CharacterTaskPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: bbva-characters-task-policy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+          Resource: '*'
+        - Effect: Allow
+          Action:
+          - dynamodb:PutItem
+          - dynamodb:DeleteItem
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+          Resource:
+            Fn::Join:
+            - ''
+            - - 'arn:aws:dynamodb:'
+              - Fn::Sub: ${AWS::Region}
+              - ':'
+              - Fn::Sub: ${AWS::AccountId}
+              - :table/t-characters-bbva
+      Roles:
+      - Ref: CharacterTaskRole
+  CharacterTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: bbva-characters-task-execution-role
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
+  CharacterTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: bbva-characters-task-role
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ecs-tasks.amazonaws.com
+          Action: sts:AssumeRole
+  CharacterCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: bbva-characters-cluster
+  CharacterTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: bbva-characters-task
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+      - FARGATE
+      Cpu: 256
+      Memory: '0.5GB'
+      ExecutionRoleArn:
+        Ref: CharacterTaskExecutionRole
+      TaskRoleArn:
+        Ref: CharacterTaskRole
+      ContainerDefinitions:
+      - Name: bbva-characters-container
+        Image: a360rn/bbva-container-app
+        PortMappings:
+        - ContainerPort: 8089
+  CharacterTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /bbva-container-app/healthcheck
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: 8089
+      UnhealthyThresholdCount: 2
+      HealthyThresholdCount: 2
+      Name: bbva-container-target-group
+      Port: 8089
+      Protocol: TCP
+      TargetGroupAttributes:
+      - Key: deregistration_delay.timeout_seconds
+        Value: 60
+      TargetType: ip
+      VpcId: vpc-00b23f091153aec82
+  CharacterLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: bbva-container-load-balancer
+      Scheme: internal
+      Subnets:
+      - subnet-02b46a1c88c424a91
+      - subnet-0da6b80723d1de920
+      Type: network
+  ListenerHTTP:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - TargetGroupArn:
+          Ref: CharacterTargetGroup
+        Type: forward
+      LoadBalancerArn:
+        Ref: CharacterLoadBalancer
+      Port: 80
+      Protocol: TCP
+  CharacterService:
+    Type: AWS::ECS::Service
+    DependsOn: ListenerHTTP
+    Properties:
+      ServiceName: bbva-characters-service
+      Cluster:
+        Ref: CharacterCluster
+      TaskDefinition:
+        Ref: CharacterTask
+      DesiredCount: 2
+      HealthCheckGracePeriodSeconds: 30
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+          - subnet-02b46a1c88c424a91
+          - subnet-0da6b80723d1de920
+          SecurityGroups:
+          - sg-086d49d9956bf48da
+      LoadBalancers:
+      - ContainerName: bbva-characters-container
+        ContainerPort: 8089
+        TargetGroupArn:
+          Ref: CharacterTargetGroup
+  CreateCharacterFunction:
+    Type: AWS::Serverless::Function
+    DependsOn:
+    - CharacterTable
+    Properties:
+      CodeUri: s3://bbva-lambdas-source/f9fa1220de64a13877adf7ac1342bd34
+      Handler: main.lambda_handler
+      Runtime: python3.7
+      Policies:
+      - DynamoDBWritePolicy:
+          TableName: t-characters-bbva
+      Environment:
+        Variables:
+          TABLE_NAME: t-characters-bbva
+  GetCharacterFunction:
+    Type: AWS::Serverless::Function
+    DependsOn:
+    - CharacterTable
+    Properties:
+      CodeUri: s3://bbva-lambdas-source/c82c6ea6e86c9437d8aa0a04926fc78a
+      Handler: main.lambda_handler
+      Runtime: python3.7
+      Policies:
+      - DynamoDBReadPolicy:
+          TableName: t-characters-bbva
+      Environment:
+        Variables:
+          TABLE_NAME: t-characters-bbva
+  DeleteCharacterFunction:
+    Type: AWS::Serverless::Function
+    DependsOn:
+    - CharacterTable
+    Properties:
+      CodeUri: s3://bbva-lambdas-source/688aec7021159f9f37ca0297377d71e5
+      Handler: main.lambda_handler
+      Runtime: python3.7
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName: t-characters-bbva
+      Environment:
+        Variables:
+          TABLE_NAME: t-characters-bbva
+  ReadStreamFunction:
+    Type: AWS::Serverless::Function
+    DependsOn:
+    - CharacterTable
+    - CharacterQueue
+    Properties:
+      CodeUri: s3://bbva-lambdas-source/5d168cb79ba32e27bd65e385abafb4ab
+      Handler: main.lambda_handler
+      Runtime: python3.7
+      Policies:
+      - DynamoDBStreamReadPolicy:
+          TableName: t-characters-bbva
+          StreamName:
+            Fn::GetAtt:
+            - CharacterTable
+            - StreamArn
+      - SQSSendMessagePolicy:
+          QueueName:
+            Fn::GetAtt:
+            - CharacterQueue
+            - QueueName
+      Environment:
+        Variables:
+          QUEUE_URL: https://sqs.us-east-1.amazonaws.com/152405606140/q-characters-bbva
+      Events:
+        ReadStreamEvent:
+          Type: DynamoDB
+          Properties:
+            Stream:
+              Fn::GetAtt:
+              - CharacterTable
+              - StreamArn
+            BatchSize: 10
+            StartingPosition: LATEST
+  CharacterApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Description: API used for characters resources
+      FailOnWarnings: true
+      Name: bbva-api
+      EndpointConfiguration:
+        Types:
+        - REGIONAL
+  V2VpcLink:
+    Type: AWS::ApiGateway::VpcLink
+    Properties:
+      Name: bbva-container-vpc-link
+      TargetArns:
+      - Ref: CharacterLoadBalancer
+  CreateCharacterFunctionLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:invokeFunction
+      FunctionName:
+        Fn::GetAtt:
+        - CreateCharacterFunction
+        - Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${CharacterApi}/*
+  GetCharacterFunctionLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:invokeFunction
+      FunctionName:
+        Fn::GetAtt:
+        - GetCharacterFunction
+        - Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${CharacterApi}/*
+  DeleteCharacterFunctionLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:invokeFunction
+      FunctionName:
+        Fn::GetAtt:
+        - DeleteCharacterFunction
+        - Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${CharacterApi}/*
+  CharacterApiDevStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId:
+        Ref: CharacterApiProdDeployment
+      RestApiId:
+        Ref: CharacterApi
+      StageName: Development
+  CharacterApiProdDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+    - CharacterOptionsMethod
+    - CreateCharacterMethod
+    - GetCharacterMethod
+    - DeleteCharacterMethod
+    Properties:
+      RestApiId:
+        Ref: CharacterApi
+      StageName: Production
+  CharactersResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId:
+        Ref: CharacterApi
+      ParentId:
+        Fn::GetAtt:
+        - CharacterApi
+        - RootResourceId
+      PathPart: characters
+  CharacterResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId:
+        Ref: CharacterApi
+      ParentId:
+        Ref: CharactersResource
+      PathPart: '{character-id}'
+  V2RootResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId:
+        Ref: CharacterApi
+      ParentId:
+        Fn::GetAtt:
+        - CharacterApi
+        - RootResourceId
+      PathPart: v2
+  V2CharactersResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId:
+        Ref: CharacterApi
+      ParentId:
+        Ref: V2RootResource
+      PathPart: characters
+  V2CharacterResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId:
+        Ref: CharacterApi
+      ParentId:
+        Ref: V2RootResource
+      PathPart: '{character-id}'
+  CharactersOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId:
+        Ref: CharacterApi
+      ResourceId:
+        Ref: CharactersResource
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      Integration:
+        Type: MOCK
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: '''Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'''
+            method.response.header.Access-Control-Allow-Methods: '''POST,OPTIONS'''
+            method.response.header.Access-Control-Allow-Origin: '''*'''
+          ResponseTemplates:
+            application/json: ''
+      MethodResponses:
+      - StatusCode: 200
+        ResponseModels:
+          application/json: Empty
+        ResponseParameters:
+          method.response.header.Access-Control-Allow-Headers: true
+          method.response.header.Access-Control-Allow-Methods: true
+          method.response.header.Access-Control-Allow-Origin: true
+  CharacterOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId:
+        Ref: CharacterApi
+      ResourceId:
+        Ref: CharacterResource
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      Integration:
+        Type: MOCK
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: '''Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'''
+            method.response.header.Access-Control-Allow-Methods: '''GET,DELETE,OPTIONS'''
+            method.response.header.Access-Control-Allow-Origin: '''*'''
+          ResponseTemplates:
+            application/json: ''
+      MethodResponses:
+      - StatusCode: 200
+        ResponseModels:
+          application/json: Empty
+        ResponseParameters:
+          method.response.header.Access-Control-Allow-Headers: true
+          method.response.header.Access-Control-Allow-Methods: true
+          method.response.header.Access-Control-Allow-Origin: true
+  V2CharactersOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId:
+        Ref: CharacterApi
+      ResourceId:
+        Ref: V2CharactersResource
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      Integration:
+        Type: MOCK
+        PassthroughBehavior: WHEN_NO_MATCH
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: '''Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'''
+            method.response.header.Access-Control-Allow-Methods: '''POST,OPTIONS'''
+            method.response.header.Access-Control-Allow-Origin: '''*'''
+          ResponseTemplates:
+            application/json: ''
+      MethodResponses:
+      - StatusCode: 200
+        ResponseModels:
+          application/json: Empty
+        ResponseParameters:
+          method.response.header.Access-Control-Allow-Headers: true
+          method.response.header.Access-Control-Allow-Methods: true
+          method.response.header.Access-Control-Allow-Origin: true
+  CreateCharacterMethod:
+    Type: AWS::ApiGateway::Method
+    DependsOn: CreateCharacterFunctionLambdaPermission
+    Properties:
+      RestApiId:
+        Ref: CharacterApi
+      ResourceId:
+        Ref: CharactersResource
+      AuthorizationType: NONE
+      HttpMethod: POST
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri:
+          Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${CreateCharacterFunction.Arn}/invocations
+        IntegrationResponses:
+        - StatusCode: 201
+  V2CreateCharacterMethod:
+    Type: AWS::ApiGateway::Method
+    DependsOn:
+    - CharacterLoadBalancer
+    - V2VpcLink
+    Properties:
+      RestApiId:
+        Ref: CharacterApi
+      ResourceId:
+        Ref: V2CharactersResource
+      AuthorizationType: NONE
+      HttpMethod: POST
+      Integration:
+        Type: HTTP_PROXY
+        ConnectionType: VPC_LINK
+        ConnectionId:
+          Ref: V2VpcLink
+        IntegrationHttpMethod: POST
+        Uri:
+          Fn::Join:
+          - ''
+          - - http://
+            - Fn::GetAtt:
+              - CharacterLoadBalancer
+              - DNSName
+            - /bbva-container-app/characters
+        IntegrationResponses:
+        - StatusCode: 201
+  GetCharacterMethod:
+    Type: AWS::ApiGateway::Method
+    DependsOn: GetCharacterFunctionLambdaPermission
+    Properties:
+      RestApiId:
+        Ref: CharacterApi
+      ResourceId:
+        Ref: CharacterResource
+      AuthorizationType: NONE
+      HttpMethod: GET
+      RequestParameters:
+        method.request.path.character-id: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri:
+          Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetCharacterFunction.Arn}/invocations
+        IntegrationResponses:
+        - StatusCode: 200
+  DeleteCharacterMethod:
+    Type: AWS::ApiGateway::Method
+    DependsOn: DeleteCharacterFunctionLambdaPermission
+    Properties:
+      RestApiId:
+        Ref: CharacterApi
+      ResourceId:
+        Ref: CharacterResource
+      AuthorizationType: NONE
+      HttpMethod: DELETE
+      RequestParameters:
+        method.request.path.character-id: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri:
+          Fn::Sub: arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${DeleteCharacterFunction.Arn}/invocations
+        IntegrationResponses:
+        - StatusCode: 200
+  CharacterTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: t-characters-bbva
+      AttributeDefinitions:
+      - AttributeName: id
+        AttributeType: S
+      KeySchema:
+      - AttributeName: id
+        KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+  CharacterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: q-characters-bbva
+  CharacterBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: bbva-website-bucket
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+  CharacterBucketPublicPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: CharacterBucket
+      PolicyDocument:
+        Id: bbva-website-bucket-policy
+        Version: '2012-10-17'
+        Statement:
+        - Sid: PublicReadForGetBucketObjects
+          Effect: Allow
+          Action:
+          - s3:GetObject
+          Resource:
+            Fn::Join:
+            - ''
+            - - 'arn:aws:s3:::'
+              - Ref: CharacterBucket
+              - /*
+          Principal: '*'
+Outputs:
+  CreateCharacterFunction:
+    Description: Lambda Function for creating a character
+    Value:
+      Fn::GetAtt:
+      - CreateCharacterFunction
+      - Arn
+  GetCharacterFunction:
+    Description: Lambda Function for getting a character
+    Value:
+      Fn::GetAtt:
+      - GetCharacterFunction
+      - Arn
+  CharacterTable:
+    Description: Table for storing characters
+    Value:
+      Fn::GetAtt:
+      - CharacterTable
+      - Arn
+  CharacterQueue:
+    Description: Queue for storing messages related to a creation of a character
+    Value:
+      Fn::GetAtt:
+      - CharacterQueue
+      - Arn
+  CharacterBucket:
+    Description: Bucket used for hosting static website
+    Value:
+      Fn::GetAtt:
+      - CharacterBucket
+      - RegionalDomainName
